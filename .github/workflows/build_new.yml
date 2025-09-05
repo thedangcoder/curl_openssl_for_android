@@ -115,32 +115,36 @@ jobs:
         with:
           path: artifacts
 
-      - name: Collect & package final zip
+      - name: Collect & package final zips
         run: |
-          mkdir -p Output
           OPENSSL_VERSION=${{ needs.get_versions.outputs.openssl_version }}
           CURL_VERSION=${{ needs.get_versions.outputs.curl_version }}
 
-          for ABI in armeabi-v7a arm64-v8a x86 x86_64 riscv64; do
-            for NDK in r24b r25c r26d r27c; do
-              mkdir -p Output/NDK-$NDK/$ABI/openssl
-              mkdir -p Output/NDK-$NDK/$ABI/curl
+          for NDK in r24b r25c r26d r27c; do
+            mkdir -p Output/$NDK
+
+            for ABI in armeabi-v7a arm64-v8a x86 x86_64 riscv64; do
+              mkdir -p Output/$NDK/$ABI/openssl
+              mkdir -p Output/$NDK/$ABI/curl
 
               OPENSSL_ART=$(find artifacts -name "OpenSSL_*_${ABI}_NDK-${NDK}.tar.gz" | head -n 1 || true)
               CURL_ART=$(find artifacts -name "cURL_*_${ABI}_NDK-${NDK}.tar.gz" | head -n 1 || true)
 
-              if [[ -f "$OPENSSL_ART" ]]; then tar -xzf "$OPENSSL_ART" -C Output/NDK-$NDK/$ABI/openssl; fi
-              if [[ -f "$CURL_ART" ]]; then tar -xzf "$CURL_ART" -C Output/NDK-$NDK/$ABI/curl; fi
+              if [[ -f "$OPENSSL_ART" ]]; then tar -xzf "$OPENSSL_ART" -C Output/$NDK/$ABI/openssl; fi
+              if [[ -f "$CURL_ART" ]]; then tar -xzf "$CURL_ART" -C Output/$NDK/$ABI/curl; fi
             done
+
+            FINAL_NAME="OpenSSL-${OPENSSL_VERSION}_cURL-${CURL_VERSION}_NDKs-${NDK}.zip"
+            cd Output/$NDK && zip -r "../../$FINAL_NAME" . && cd ../..
+
+            echo "$FINAL_NAME" >> zips.txt
           done
 
-          FINAL_NAME="OpenSSL-${OPENSSL_VERSION}_cURL-${CURL_VERSION}_NDKs-r24b-r25c-r26d-r27c.zip"
-          cd Output && zip -r "../$FINAL_NAME" . && cd ..
-          echo "FINAL_ZIP=$FINAL_NAME" >> $GITHUB_ENV
+          echo "ZIP_LIST=$(cat zips.txt | tr '\n' ' ')" >> $GITHUB_ENV
 
       - name: Create release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: release-openssl${{ needs.get_versions.outputs.openssl_version }}-curl${{ needs.get_versions.outputs.curl_version }}
           name: "OpenSSL ${{ needs.get_versions.outputs.openssl_version }} & cURL ${{ needs.get_versions.outputs.curl_version }} Android Builds"
-          files: ${{ env.FINAL_ZIP }}
+          files: ${{ env.ZIP_LIST }}
