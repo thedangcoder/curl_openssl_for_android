@@ -281,6 +281,19 @@ jobs:
           # List contents to verify structure
           unzip -l Output.zip
 
+            - name: Package final zip with versions
+        run: |
+          OPENSSL_VERSION=${{ needs.get_versions.outputs.openssl_version }}
+          CURL_VERSION=${{ needs.get_versions.outputs.curl_version }}
+          NDK_VERSION=r27c
+          
+          cd Output
+          FINAL_NAME="OpenSSL-${OPENSSL_VERSION}_cURL-${CURL_VERSION}_NDK-${NDK_VERSION}.zip"
+          zip -r "../$FINAL_NAME" .
+          cd ..
+          
+          echo "FINAL_ZIP=$FINAL_NAME" >> $GITHUB_ENV
+
       - name: Create consolidated release
         uses: softprops/action-gh-release@v1
         with:
@@ -288,4 +301,4 @@ jobs:
           name: >-
             OpenSSL ${{ needs.get_versions.outputs.openssl_version }} & cURL ${{ needs.get_versions.outputs.curl_version }} Android Builds
             (Updated ${{ steps.date.outputs.release_date }})
-          files: Output.zip
+          files: ${{ env.FINAL_ZIP }}
