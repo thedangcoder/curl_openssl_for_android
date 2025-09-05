@@ -14,6 +14,7 @@ permissions:
 # get dynamic versions from upstream
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
   get_versions:
     name: Fetch Latest Versions
@@ -197,91 +198,33 @@ jobs:
           
       - name: Create organized directory structure
         run: |
-          # Create the organized directory structure
           mkdir -p Output/{curl,openssl}/{arm64-v8a,armeabi-v7a,x86,x86_64,riscv64}/{include,lib}
-          
-          # Debug: List downloaded artifacts
-          find artifacts -type f | sort
           
           # Process OpenSSL artifacts
           for ABI in arm64-v8a armeabi-v7a x86 x86_64 riscv64; do
-            # Find the OpenSSL artifact for this ABI
             OPENSSL_ARTIFACT=$(find artifacts -name "OpenSSL_*_${ABI}.tar.gz" | head -n 1)
-            
-            if [ -n "$OPENSSL_ARTIFACT" ] && [ -f "$OPENSSL_ARTIFACT" ]; then
-              echo "Processing OpenSSL for ${ABI} from $OPENSSL_ARTIFACT"
-              
-              # Create temp directory for extraction
+            if [ -f "$OPENSSL_ARTIFACT" ]; then
               mkdir -p tmp_openssl_${ABI}
-              
-              # Extract to temp directory
               tar -xzf "$OPENSSL_ARTIFACT" -C tmp_openssl_${ABI}
-              
-              # Debug: Show extracted content
-              find tmp_openssl_${ABI} -type d | sort
-              
-              # Copy to organized structure - handle include and lib directly
-              if [ -d "tmp_openssl_${ABI}/include" ]; then
-                cp -r tmp_openssl_${ABI}/include/* "Output/openssl/${ABI}/include/" || true
-              fi
-              
-              if [ -d "tmp_openssl_${ABI}/lib" ]; then
-                cp -r tmp_openssl_${ABI}/lib/* "Output/openssl/${ABI}/lib/" || true
-              fi
-              
-              # Clean up temp directory
+              [ -d "tmp_openssl_${ABI}/include" ] && cp -r tmp_openssl_${ABI}/include/* "Output/openssl/${ABI}/include/" || true
+              [ -d "tmp_openssl_${ABI}/lib" ] && cp -r tmp_openssl_${ABI}/lib/* "Output/openssl/${ABI}/lib/" || true
               rm -rf tmp_openssl_${ABI}
-            else
-              echo "⚠️ OpenSSL artifact for ${ABI} not found"
             fi
           done
           
           # Process cURL artifacts
           for ABI in arm64-v8a armeabi-v7a x86 x86_64 riscv64; do
-            # Find the curl artifact for this ABI
             CURL_ARTIFACT=$(find artifacts -name "curl_*_${ABI}.tar.gz" | head -n 1)
-            
-            if [ -n "$CURL_ARTIFACT" ] && [ -f "$CURL_ARTIFACT" ]; then
-              echo "Processing cURL for ${ABI} from $CURL_ARTIFACT"
-              
-              # Create temp directory for extraction
+            if [ -f "$CURL_ARTIFACT" ]; then
               mkdir -p tmp_curl_${ABI}
-              
-              # Extract to temp directory
               tar -xzf "$CURL_ARTIFACT" -C tmp_curl_${ABI}
-              
-              # Debug: Show extracted content
-              find tmp_curl_${ABI} -type d | sort
-              
-              # Copy to organized structure - handle include and lib directly
-              if [ -d "tmp_curl_${ABI}/include" ]; then
-                cp -r tmp_curl_${ABI}/include/* "Output/curl/${ABI}/include/" || true
-              fi
-              
-              if [ -d "tmp_curl_${ABI}/lib" ]; then
-                cp -r tmp_curl_${ABI}/lib/* "Output/curl/${ABI}/lib/" || true
-              fi
-              
-              # Clean up temp directory
+              [ -d "tmp_curl_${ABI}/include" ] && cp -r tmp_curl_${ABI}/include/* "Output/curl/${ABI}/include/" || true
+              [ -d "tmp_curl_${ABI}/lib" ] && cp -r tmp_curl_${ABI}/lib/* "Output/curl/${ABI}/lib/" || true
               rm -rf tmp_curl_${ABI}
-            else
-              echo "⚠️ cURL artifact for ${ABI} not found"
             fi
           done
-          
-          # Debug: Show final structure before zipping
-          echo "Final directory structure:"
-          find Output -type f | sort
-          
-          # Create the final zip file
-          cd Output
-          zip -r ../Output.zip .
-          cd ..
-          
-          # List contents to verify structure
-          unzip -l Output.zip
 
-            - name: Package final zip with versions
+      - name: Package final zip with versions
         run: |
           OPENSSL_VERSION=${{ needs.get_versions.outputs.openssl_version }}
           CURL_VERSION=${{ needs.get_versions.outputs.curl_version }}
