@@ -116,6 +116,11 @@ jobs:
         with:
           path: artifacts
 
+      - name: Check for artifacts
+        run: |
+          echo "Kiểm tra các artifact đã tải về:"
+          ls -R artifacts
+
       - name: Collect & package final zips
         id: collect_zips
         run: |
@@ -123,6 +128,14 @@ jobs:
           CURL_VERSION=${{ needs.get_versions.outputs.curl_version }}
           NDK_LIST=(r24b r25c r26d r27c)
           ABI_LIST=(armeabi-v7a arm64-v8a x86 x86_64 riscv64)
+
+          # Kiểm tra xem có bất kỳ artifact nào không
+          if [ -z "$(ls -A artifacts)" ]; then
+            echo "Không tìm thấy artifact nào. Vui lòng kiểm tra các job biên dịch."
+            exit 1
+          fi
+
+          echo "Bắt đầu đóng gói các tệp tin..."
 
           for NDK in "${NDK_LIST[@]}"; do
             mkdir -p Output/$NDK
@@ -148,6 +161,7 @@ jobs:
             cd Output/$NDK
             zip -r "../../$FINAL_NAME" .
             cd ../..
+            echo "Đã tạo: $FINAL_NAME"
           done
 
       - name: Tạo hoặc cập nhật bản phát hành và tải tệp lên
