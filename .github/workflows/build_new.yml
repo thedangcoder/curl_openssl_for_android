@@ -149,27 +149,14 @@ jobs:
             cd ../..
           done
 
-      - name: Tạo bản phát hành mới (Create a new release)
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tạo hoặc cập nhật bản phát hành và tải tệp lên
+        uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.ref_name }}
-          release_name: "Release ${{ github.ref_name }}"
+          tag_name: ${{ github.ref }}
+          name: "Release ${{ github.ref_name }}"
           draft: false
           prerelease: false
-
-      - name: Tải lên các tệp tin nén (Upload compressed files)
+          files: |
+            OpenSSL-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          UPLOAD_URL: ${{ steps.create_release.outputs.upload_url }}
-        run: |
-          for file in *.zip; do
-            echo "Uploading $file..."
-            curl -X POST \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Content-Type: application/zip" \
-              --data-binary "@$file" \
-              "$UPLOAD_URL?name=$(basename "$file")"
-          done
