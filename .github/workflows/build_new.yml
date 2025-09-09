@@ -123,8 +123,6 @@ jobs:
           NDK_LIST=(r24b r25c r26d r27c)
           ABI_LIST=(armeabi-v7a arm64-v8a x86 x86_64 riscv64)
 
-          > zips.txt
-
           for NDK in "${NDK_LIST[@]}"; do
             mkdir -p Output/$NDK
             for ABI in "${ABI_LIST[@]}"; do
@@ -132,14 +130,14 @@ jobs:
               mkdir -p Output/$NDK/$ABI/curl
 
               # Artifact OpenSSL
-              OPENSSL_ART="artifacts/OpenSSL-${OPENSSL_VERSION}_${ABI}_NDK-${NDK}.tar.gz"
-              if [[ -d "$OPENSSL_ART" ]]; then
+              OPENSSL_ART="artifacts/OpenSSL-${ABI}-NDK-${NDK}/OpenSSL_${OPENSSL_VERSION}_${ABI}_NDK-${NDK}.tar.gz"
+              if [[ -f "$OPENSSL_ART" ]]; then
                 tar -xzf "$OPENSSL_ART" -C Output/$NDK/$ABI/openssl
               fi
 
               # Artifact cURL
-              CURL_ART="artifacts/cURL-${CURL_VERSION}_${ABI}_NDK-${NDK}.tar.gz"
-              if [[ -d "$CURL_ART" ]]; then
+              CURL_ART="artifacts/cURL-${ABI}-NDK-${NDK}/cURL_${CURL_VERSION}_${ABI}_NDK-${NDK}.tar.gz"
+              if [[ -f "$CURL_ART" ]]; then
                 tar -xzf "$CURL_ART" -C Output/$NDK/$ABI/curl
               fi
             done
@@ -149,10 +147,7 @@ jobs:
             cd Output/$NDK
             zip -r "../../$FINAL_NAME" .
             cd ../..
-            echo "$FINAL_NAME" >> zips.txt
           done
-
-          echo "ZIP_LIST=$(cat zips.txt | tr '\n' ' ')" >> $GITHUB_ENV
 
       - name: Tạo bản phát hành mới (Create a new release)
         id: create_release
@@ -160,16 +155,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.ref }}
-          release_name: "Release ${{ github.ref }}"
+          tag_name: ${{ github.ref_name }}
+          release_name: "Release ${{ github.ref_name }}"
           draft: false
           prerelease: false
 
       - name: Tải lên các tệp tin nén (Upload compressed files)
-        uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./OpenSSL-*.zip
-          asset_name: 'OpenSSL-${{ needs.get_versions.outputs.openssl_version }}_cURL-${{ needs.get_versions.outputs.curl_version }}_NDKs-${{ matrix.ANDROID_NDK }}.zip'
+          UPLOAD_URL: ${{ steps.create_release.outputs.upload_url }}
+        run: |
+          for file in *.zip; do
+            echo "Uploading $file..."
+            curl -X POST \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Content-Type: application/zip" \
+              --data-binary "@$file" \
+              "$UPLOAD_URL?name=$(basename "$file")"
+          done
