@@ -119,23 +119,25 @@ jobs:
         run: |
           OPENSSL_VERSION=${{ needs.get_versions.outputs.openssl_version }}
           CURL_VERSION=${{ needs.get_versions.outputs.curl_version }}
+          NDK_LIST=(r24b r25c r26d r27c)
+          ABI_LIST=(armeabi-v7a arm64-v8a x86 x86_64 riscv64)
 
-          # Danh sách NDK versions mà mình build
-          for NDK in r24b r25c r26d r27c; do
+          > zips.txt
+
+          for NDK in "${NDK_LIST[@]}"; do
             mkdir -p Output/$NDK
-
-            # Lặp qua tất cả ABI
-            for ABI in armeabi-v7a arm64-v8a x86 x86_64 riscv64; do
+            for ABI in "${ABI_LIST[@]}"; do
               mkdir -p Output/$NDK/$ABI/openssl
               mkdir -p Output/$NDK/$ABI/curl
 
-              # Tìm artifact cho OpenSSL + cURL đúng NDK & ABI
-              OPENSSL_ART=$(find artifacts -name "OpenSSL_*_${ABI}_NDK-${NDK}.tar.gz" | head -n 1 || true)
-              CURL_ART=$(find artifacts -name "cURL_*_${ABI}_NDK-${NDK}.tar.gz" | head -n 1 || true)
-
+              # Artifact OpenSSL
+              OPENSSL_ART="artifacts/OpenSSL_${OPENSSL_VERSION}_${ABI}_NDK-${NDK}.tar.gz"
               if [[ -f "$OPENSSL_ART" ]]; then
                 tar -xzf "$OPENSSL_ART" -C Output/$NDK/$ABI/openssl
               fi
+
+              # Artifact cURL
+              CURL_ART="artifacts/cURL_${CURL_VERSION}_${ABI}_NDK-${NDK}.tar.gz"
               if [[ -f "$CURL_ART" ]]; then
                 tar -xzf "$CURL_ART" -C Output/$NDK/$ABI/curl
               fi
@@ -143,18 +145,12 @@ jobs:
 
             # Tạo zip cho từng NDK
             FINAL_NAME="OpenSSL-${OPENSSL_VERSION}_cURL-${CURL_VERSION}_NDKs-${NDK}.zip"
-            cd Output/$NDK && zip -r "../../$FINAL_NAME" . && cd ../..
-
+            cd Output/$NDK
+            zip -r "../../$FINAL_NAME" .
+            cd ../..
             echo "$FINAL_NAME" >> zips.txt
           done
 
-          # Xuất danh sách zip ra env để upload lên release
+          # Xuất danh sách zip ra env
           echo "ZIP_LIST=$(cat zips.txt | tr '\n' ' ')" >> $GITHUB_ENV
 
-      - name: Create release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: release-openssl${{ needs.get_versions.outputs.openssl_version }}-curl${{ needs.get_versions.outputs.curl_version }}
-          name: >-
-            OpenSSL ${{ needs.get_versions.outputs.openssl_version }} & cURL ${{ needs.get_versions.outputs.curl_version }} Android Builds
-          files: ${{ env.ZIP_LIST }}
