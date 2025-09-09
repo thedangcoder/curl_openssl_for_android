@@ -152,7 +152,7 @@ jobs:
       - name: Tạo hoặc cập nhật bản phát hành và tải tệp lên
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.ref }}
+          tag_name: ${{ github.ref_name }}
           name: "Release ${{ github.ref_name }}"
           draft: false
           prerelease: false
