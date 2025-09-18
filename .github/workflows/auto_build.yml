@@ -5,13 +5,13 @@ on:
     branches: [ master ]
   workflow_dispatch:
   schedule:
-    # Run daily at midnight UTC
+    # Chạy hàng ngày lúc 00:00 UTC (7:00 sáng giờ Việt Nam)
     - cron: '0 0 * * *'
-    
+
+# Cấp quyền 'write' để workflow có thể push code và tạo release
 permissions:
   contents: write
-  
-# get dynamic versions from upstream
+
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -68,7 +68,7 @@ jobs:
       OPENSSL_VERSION: ${{ needs.get_versions.outputs.openssl_version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install prerequisites
         run: sudo apt-get update -qq && sudo apt-get install -qq aria2
@@ -132,7 +132,7 @@ jobs:
       OPENSSL_VERSION: ${{ needs.get_versions.outputs.openssl_version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install prerequisites
         run: sudo apt-get update -qq && sudo apt-get install -qq aria2 autoconf automake libtool pkg-config
@@ -181,11 +181,17 @@ jobs:
           path: curl_${{ env.CURL_VERSION }}_${{ matrix.ANDROID_TARGET_ABI }}.tar.gz
 
   Publish_Release:
+    name: Publish Release and Commit to Repo
     needs:
+      - get_versions # Cần needs get_versions ở đây để lấy versions
       - Compile_OpenSSL_for_Android
       - Compile_cURL_for_Android
     runs-on: ubuntu-latest
     steps:
+      # <--- THÊM BƯỚC NÀY: Checkout repo để có thể commit vào
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -195,11 +201,13 @@ jobs:
         id: date
         run: |
           echo "release_date=$(date -u +'%Y-%m-%d')" >> $GITHUB_OUTPUT
-          
+
       - name: Create organized directory structure
         run: |
+          # Xóa thư mục Output cũ nếu có để tránh file rác
+          rm -rf Output
           mkdir -p Output/{curl,openssl}/{arm64-v8a,armeabi-v7a,x86,x86_64,riscv64}/{include,lib}
-          
+
           # Process OpenSSL artifacts
           for ABI in arm64-v8a armeabi-v7a x86 x86_64 riscv64; do
             OPENSSL_ARTIFACT=$(find artifacts -name "OpenSSL_*_${ABI}.tar.gz" | head -n 1)
@@ -211,7 +219,7 @@ jobs:
               rm -rf tmp_openssl_${ABI}
             fi
           done
-          
+
           # Process cURL artifacts
           for ABI in arm64-v8a armeabi-v7a x86 x86_64 riscv64; do
             CURL_ARTIFACT=$(find artifacts -name "curl_*_${ABI}.tar.gz" | head -n 1)
@@ -224,24 +232,38 @@ jobs:
             fi
           done
 
-      - name: Package final zip with versions
+      # <--- THÊM BƯỚC NÀY: Tự động commit và push thư mục Output vào repo
+      - name: Commit and Push to Repo
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add Output
+          # Kiểm tra xem có thay đổi không trước khi commit
+          if ! git diff --staged --quiet; then
+            OPENSSL_VERSION=${{ needs.get_versions.outputs.openssl_version }}
+            CURL_VERSION=${{ needs.get_versions.outputs.curl_version }}
+            git commit -m "Update prebuilt libraries to OpenSSL ${OPENSSL_VERSION} & cURL ${CURL_VERSION}"
+            git push
+          else
+            echo "No changes to commit."
+          fi
+
+      - name: Package final zip for release
         run: |
           OPENSSL_VERSION=${{ needs.get_versions.outputs.openssl_version }}
           CURL_VERSION=${{ needs.get_versions.outputs.curl_version }}
           NDK_VERSION=r27c
-          
-          cd Output
+
           FINAL_NAME="OpenSSL-${OPENSSL_VERSION}_cURL-${CURL_VERSION}_NDK-${NDK_VERSION}.zip"
-          zip -r "../$FINAL_NAME" .
-          cd ..
-          
+          zip -r "$FINAL_NAME" Output
           echo "FINAL_ZIP=$FINAL_NAME" >> $GITHUB_ENV
 
       - name: Create consolidated release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2 # Cập nhật lên v2
         with:
           tag_name: release-openssl${{ needs.get_versions.outputs.openssl_version }}-curl${{ needs.get_versions.outputs.curl_version }}
           name: >-
             OpenSSL ${{ needs.get_versions.outputs.openssl_version }} & cURL ${{ needs.get_versions.outputs.curl_version }} Android Builds
             (Updated ${{ steps.date.outputs.release_date }})
           files: ${{ env.FINAL_ZIP }}
+          # 'prerelease: false' và 'draft: false' là mặc định, nhưng có thể thêm nếu muốn
