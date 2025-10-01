@@ -17,7 +17,7 @@ old_library='libcurl.a'
 inherited_linker_flags=''
 
 # Libraries that this one depends upon.
-dependency_libs=' -lssl -lcrypto -lz -L/home/runner/work/curl_openssl_for_android/curl_openssl_for_android/openssl_3.5.3_armeabi-v7a/lib'
+dependency_libs=' -lssl -lcrypto -lz -L/home/runner/work/curl_openssl_for_android/curl_openssl_for_android/openssl_3.5.4_armeabi-v7a/lib'
 
 # Names of additional weak libraries provided by this library
 weak_library_names=''
