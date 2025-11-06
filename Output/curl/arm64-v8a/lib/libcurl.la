@@ -38,4 +38,4 @@ dlopen=''
 dlpreopen=''
 
 # Directory that this library needs to be installed in:
-libdir='/home/runner/work/curl_openssl_for_android/curl_openssl_for_android/curl_8.16.0_arm64-v8a/lib'
+libdir='/home/runner/work/curl_openssl_for_android/curl_openssl_for_android/curl_8.17.0_arm64-v8a/lib'
