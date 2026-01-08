@@ -1,0 +1,26 @@
+# Build output
+Output/
+
+# Source downloads
+*.tar.gz
+*.zip
+!*.tar.gz.asc
+
+# NDK
+android-ndk-*/
+
+# OpenSSL/cURL source directories
+openssl-*/
+curl-*/
+openssl_*/
+curl_*/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

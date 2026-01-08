@@ -1,14 +1,10 @@
 name: Android Build and Release
 
 on:
-  push:
-    branches: [ master ]
   workflow_dispatch:
   schedule:
-    # Chạy hàng ngày lúc 00:00 UTC (7:00 sáng giờ Việt Nam)
     - cron: '0 0 * * *'
 
-# Cấp quyền 'write' để workflow có thể push code và tạo release
 permissions:
   contents: write
 
@@ -16,16 +12,14 @@ env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
-  get_versions:
-    name: Fetch Latest Versions
+  check_versions:
+    name: Check for New Versions
     runs-on: ubuntu-latest
     outputs:
       openssl_version: ${{ steps.openssl.outputs.openssl_version }}
       curl_version: ${{ steps.curl.outputs.curl_version }}
+      should_build: ${{ steps.check.outputs.should_build }}
     steps:
-      - name: Install jq and curl
-        run: sudo apt-get update -qq && sudo apt-get install -qq jq curl
-
       - name: Get latest OpenSSL version
         id: openssl
         run: |
@@ -37,13 +31,33 @@ jobs:
       - name: Get latest cURL version
         id: curl
         run: |
-          tag=curl-$(curl -s https://api.github.com/repos/curl/curl/releases/latest | jq -r .name)
-          version=${tag#curl-}
-          echo "curl_version=$version" >> $GITHUB_OUTPUT
+          tag=$(curl -s https://api.github.com/repos/curl/curl/releases/latest | jq -r .name)
+          echo "curl_version=$tag" >> $GITHUB_OUTPUT
+
+      - name: Check if release already exists
+        id: check
+        run: |
+          OPENSSL_VERSION=${{ steps.openssl.outputs.openssl_version }}
+          CURL_VERSION=${{ steps.curl.outputs.curl_version }}
+          TAG="release-openssl${OPENSSL_VERSION}-curl${CURL_VERSION}"
+
+          # Check if tag exists
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${TAG}")
+
+          if [ "$HTTP_CODE" == "200" ]; then
+            echo "Release ${TAG} already exists. Skipping build."
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            echo "New versions detected. Building..."
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          fi
 
   Compile_OpenSSL_for_Android:
-    name: Compile OpenSSL ${{ matrix.ANDROID_TARGET_ABI }}
-    needs: get_versions
+    name: OpenSSL ${{ matrix.ANDROID_TARGET_ABI }}
+    needs: check_versions
+    if: needs.check_versions.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -51,39 +65,40 @@ jobs:
         include:
           - ANDROID_TARGET_ABI: armeabi-v7a
             ANDROID_TARGET_API: "21"
-            ANDROID_NDK: r27c
           - ANDROID_TARGET_ABI: arm64-v8a
             ANDROID_TARGET_API: "21"
-            ANDROID_NDK: r27c
           - ANDROID_TARGET_ABI: riscv64
             ANDROID_TARGET_API: "35"
-            ANDROID_NDK: r27c
           - ANDROID_TARGET_ABI: x86
             ANDROID_TARGET_API: "21"
-            ANDROID_NDK: r27c
           - ANDROID_TARGET_ABI: x86_64
             ANDROID_TARGET_API: "21"
-            ANDROID_NDK: r27c
     env:
-      OPENSSL_VERSION: ${{ needs.get_versions.outputs.openssl_version }}
+      OPENSSL_VERSION: ${{ needs.check_versions.outputs.openssl_version }}
+      ANDROID_NDK: r27c
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install prerequisites
-        run: sudo apt-get update -qq && sudo apt-get install -qq aria2
+      - name: Cache Android NDK
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: android-ndk-${{ env.ANDROID_NDK }}
+          key: android-ndk-${{ env.ANDROID_NDK }}-linux
 
       - name: Download Android NDK
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
         run: |
-          aria2c -q -o android-ndk-${{ matrix.ANDROID_NDK }}.zip \
-            https://dl.google.com/android/repository/android-ndk-${{ matrix.ANDROID_NDK }}-linux.zip
-          unzip -q android-ndk-${{ matrix.ANDROID_NDK }}.zip
+          curl -sSL -o android-ndk.zip \
+            https://dl.google.com/android/repository/android-ndk-${{ env.ANDROID_NDK }}-linux.zip
+          unzip -q android-ndk.zip
 
       - name: Download OpenSSL
         run: |
-          aria2c -q -o openssl-${{ env.OPENSSL_VERSION }}.tar.gz \
+          curl -sSL -o openssl.tar.gz \
             https://github.com/openssl/openssl/releases/download/openssl-${{ env.OPENSSL_VERSION }}/openssl-${{ env.OPENSSL_VERSION }}.tar.gz
-          tar xf openssl-${{ env.OPENSSL_VERSION }}.tar.gz
+          tar xf openssl.tar.gz
 
       - name: Build OpenSSL
         run: |
@@ -91,7 +106,7 @@ jobs:
             ${{ matrix.ANDROID_TARGET_API }} \
             ${{ matrix.ANDROID_TARGET_ABI }} \
             ${{ env.OPENSSL_VERSION }} \
-            ${{ matrix.ANDROID_NDK }}
+            ${{ env.ANDROID_NDK }}
 
       - name: Package OpenSSL artifact
         run: |
@@ -105,8 +120,9 @@ jobs:
           path: OpenSSL_${{ env.OPENSSL_VERSION }}_${{ matrix.ANDROID_TARGET_ABI }}.tar.gz
 
   Compile_cURL_for_Android:
-    name: Compile cURL ${{ matrix.ANDROID_TARGET_ABI }}
-    needs: [get_versions, Compile_OpenSSL_for_Android]
+    name: cURL ${{ matrix.ANDROID_TARGET_ABI }}
+    needs: [check_versions, Compile_OpenSSL_for_Android]
+    if: needs.check_versions.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -114,59 +130,63 @@ jobs:
         include:
           - ANDROID_TARGET_ABI: armeabi-v7a
             ANDROID_TARGET_API: "21"
-            ANDROID_NDK: r27c
           - ANDROID_TARGET_ABI: arm64-v8a
             ANDROID_TARGET_API: "21"
-            ANDROID_NDK: r27c
           - ANDROID_TARGET_ABI: riscv64
             ANDROID_TARGET_API: "35"
-            ANDROID_NDK: r27c
           - ANDROID_TARGET_ABI: x86
             ANDROID_TARGET_API: "21"
-            ANDROID_NDK: r27c
           - ANDROID_TARGET_ABI: x86_64
             ANDROID_TARGET_API: "21"
-            ANDROID_NDK: r27c
     env:
-      CURL_VERSION: ${{ needs.get_versions.outputs.curl_version }}
-      OPENSSL_VERSION: ${{ needs.get_versions.outputs.openssl_version }}
+      CURL_VERSION: ${{ needs.check_versions.outputs.curl_version }}
+      OPENSSL_VERSION: ${{ needs.check_versions.outputs.openssl_version }}
+      ANDROID_NDK: r27c
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install prerequisites
-        run: sudo apt-get update -qq && sudo apt-get install -qq aria2 autoconf automake libtool pkg-config
+      - name: Install build tools
+        run: sudo apt-get update -qq && sudo apt-get install -qq autoconf automake libtool pkg-config
+
+      - name: Cache Android NDK
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: android-ndk-${{ env.ANDROID_NDK }}
+          key: android-ndk-${{ env.ANDROID_NDK }}-linux
 
       - name: Download Android NDK
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
         run: |
-          aria2c -q -o android-ndk-${{ matrix.ANDROID_NDK }}.zip \
-            https://dl.google.com/android/repository/android-ndk-${{ matrix.ANDROID_NDK }}-linux.zip
-          unzip -q android-ndk-${{ matrix.ANDROID_NDK }}.zip
+          curl -sSL -o android-ndk.zip \
+            https://dl.google.com/android/repository/android-ndk-${{ env.ANDROID_NDK }}-linux.zip
+          unzip -q android-ndk.zip
 
       - name: Download cURL
         run: |
-          aria2c -q -o curl-${{ env.CURL_VERSION }}.tar.gz \
+          curl -sSL -o curl.tar.gz \
             https://curl.se/download/curl-${{ env.CURL_VERSION }}.tar.gz
-          tar xf curl-${{ env.CURL_VERSION }}.tar.gz
+          tar xf curl.tar.gz
 
       - name: Download OpenSSL artifact
         uses: actions/download-artifact@v4
         with:
           name: OpenSSL-${{ matrix.ANDROID_TARGET_ABI }}
-          path: ./
 
       - name: Extract OpenSSL artifact
         run: |
           mkdir -p openssl_${{ env.OPENSSL_VERSION }}_${{ matrix.ANDROID_TARGET_ABI }}
-          tar -xzf OpenSSL_${{ env.OPENSSL_VERSION }}_${{ matrix.ANDROID_TARGET_ABI }}.tar.gz -C openssl_${{ env.OPENSSL_VERSION }}_${{ matrix.ANDROID_TARGET_ABI }}
+          tar -xzf OpenSSL_${{ env.OPENSSL_VERSION }}_${{ matrix.ANDROID_TARGET_ABI }}.tar.gz \
+            -C openssl_${{ env.OPENSSL_VERSION }}_${{ matrix.ANDROID_TARGET_ABI }}
 
-      - name: Build cURL with SSL
+      - name: Build cURL
         run: |
           bash curl_build.sh \
             ${{ matrix.ANDROID_TARGET_API }} \
             ${{ matrix.ANDROID_TARGET_ABI }} \
             ${{ env.CURL_VERSION }} \
-            ${{ matrix.ANDROID_NDK }} \
+            ${{ env.ANDROID_NDK }} \
             ${{ env.OPENSSL_VERSION }}
 
       - name: Package cURL artifact
@@ -181,89 +201,73 @@ jobs:
           path: curl_${{ env.CURL_VERSION }}_${{ matrix.ANDROID_TARGET_ABI }}.tar.gz
 
   Publish_Release:
-    name: Publish Release and Commit to Repo
-    needs:
-      - get_versions # Cần needs get_versions ở đây để lấy versions
-      - Compile_OpenSSL_for_Android
-      - Compile_cURL_for_Android
+    name: Publish Release
+    needs: [check_versions, Compile_OpenSSL_for_Android, Compile_cURL_for_Android]
+    if: needs.check_versions.outputs.should_build == 'true'
     runs-on: ubuntu-latest
+    env:
+      OPENSSL_VERSION: ${{ needs.check_versions.outputs.openssl_version }}
+      CURL_VERSION: ${{ needs.check_versions.outputs.curl_version }}
+      ANDROID_NDK: r27c
     steps:
-      # <--- THÊM BƯỚC NÀY: Checkout repo để có thể commit vào
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Set release date
-        id: date
-        run: |
-          echo "release_date=$(date -u +'%Y-%m-%d')" >> $GITHUB_OUTPUT
-
       - name: Create organized directory structure
         run: |
-          # Xóa thư mục Output cũ nếu có để tránh file rác
-          rm -rf Output
           mkdir -p Output/{curl,openssl}/{arm64-v8a,armeabi-v7a,x86,x86_64,riscv64}/{include,lib}
 
-          # Process OpenSSL artifacts
           for ABI in arm64-v8a armeabi-v7a x86 x86_64 riscv64; do
-            OPENSSL_ARTIFACT=$(find artifacts -name "OpenSSL_*_${ABI}.tar.gz" | head -n 1)
-            if [ -f "$OPENSSL_ARTIFACT" ]; then
-              mkdir -p tmp_openssl_${ABI}
-              tar -xzf "$OPENSSL_ARTIFACT" -C tmp_openssl_${ABI}
-              [ -d "tmp_openssl_${ABI}/include" ] && cp -r tmp_openssl_${ABI}/include/* "Output/openssl/${ABI}/include/" || true
-              [ -d "tmp_openssl_${ABI}/lib" ] && cp -r tmp_openssl_${ABI}/lib/* "Output/openssl/${ABI}/lib/" || true
-              rm -rf tmp_openssl_${ABI}
+            # OpenSSL
+            if [ -f "artifacts/OpenSSL-${ABI}/OpenSSL_${{ env.OPENSSL_VERSION }}_${ABI}.tar.gz" ]; then
+              mkdir -p tmp_openssl
+              tar -xzf "artifacts/OpenSSL-${ABI}/OpenSSL_${{ env.OPENSSL_VERSION }}_${ABI}.tar.gz" -C tmp_openssl
+              cp -r tmp_openssl/include/* "Output/openssl/${ABI}/include/" 2>/dev/null || true
+              cp -r tmp_openssl/lib/* "Output/openssl/${ABI}/lib/" 2>/dev/null || true
+              rm -rf tmp_openssl
+            fi
+
+            # cURL
+            if [ -f "artifacts/cURL-${ABI}/curl_${{ env.CURL_VERSION }}_${ABI}.tar.gz" ]; then
+              mkdir -p tmp_curl
+              tar -xzf "artifacts/cURL-${ABI}/curl_${{ env.CURL_VERSION }}_${ABI}.tar.gz" -C tmp_curl
+              cp -r tmp_curl/include/* "Output/curl/${ABI}/include/" 2>/dev/null || true
+              cp -r tmp_curl/lib/* "Output/curl/${ABI}/lib/" 2>/dev/null || true
+              rm -rf tmp_curl
             fi
           done
 
-          # Process cURL artifacts
-          for ABI in arm64-v8a armeabi-v7a x86 x86_64 riscv64; do
-            CURL_ARTIFACT=$(find artifacts -name "curl_*_${ABI}.tar.gz" | head -n 1)
-            if [ -f "$CURL_ARTIFACT" ]; then
-              mkdir -p tmp_curl_${ABI}
-              tar -xzf "$CURL_ARTIFACT" -C tmp_curl_${ABI}
-              [ -d "tmp_curl_${ABI}/include" ] && cp -r tmp_curl_${ABI}/include/* "Output/curl/${ABI}/include/" || true
-              [ -d "tmp_curl_${ABI}/lib" ] && cp -r tmp_curl_${ABI}/lib/* "Output/curl/${ABI}/lib/" || true
-              rm -rf tmp_curl_${ABI}
-            fi
-          done
-
-      # <--- THÊM BƯỚC NÀY: Tự động commit và push thư mục Output vào repo
-      - name: Commit and Push to Repo
+      - name: Package release
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add Output
-          # Kiểm tra xem có thay đổi không trước khi commit
-          if ! git diff --staged --quiet; then
-            OPENSSL_VERSION=${{ needs.get_versions.outputs.openssl_version }}
-            CURL_VERSION=${{ needs.get_versions.outputs.curl_version }}
-            git commit -m "Update prebuilt libraries to OpenSSL ${OPENSSL_VERSION} & cURL ${CURL_VERSION}"
-            git push
-          else
-            echo "No changes to commit."
-          fi
-
-      - name: Package final zip for release
-        run: |
-          OPENSSL_VERSION=${{ needs.get_versions.outputs.openssl_version }}
-          CURL_VERSION=${{ needs.get_versions.outputs.curl_version }}
-          NDK_VERSION=r27c
-
-          FINAL_NAME="OpenSSL-${OPENSSL_VERSION}_cURL-${CURL_VERSION}_NDK-${NDK_VERSION}.zip"
+          FINAL_NAME="OpenSSL-${{ env.OPENSSL_VERSION }}_cURL-${{ env.CURL_VERSION }}_NDK-${{ env.ANDROID_NDK }}.zip"
           zip -r "$FINAL_NAME" Output
           echo "FINAL_ZIP=$FINAL_NAME" >> $GITHUB_ENV
 
-      - name: Create consolidated release
-        uses: softprops/action-gh-release@v2 # Cập nhật lên v2
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: release-openssl${{ needs.get_versions.outputs.openssl_version }}-curl${{ needs.get_versions.outputs.curl_version }}
-          name: >-
-            OpenSSL ${{ needs.get_versions.outputs.openssl_version }} & cURL ${{ needs.get_versions.outputs.curl_version }} Android Builds
-            (Updated ${{ steps.date.outputs.release_date }})
+          tag_name: release-openssl${{ env.OPENSSL_VERSION }}-curl${{ env.CURL_VERSION }}
+          name: OpenSSL ${{ env.OPENSSL_VERSION }} & cURL ${{ env.CURL_VERSION }} for Android
+          body: |
+            ## Prebuilt Static Libraries for Android
+
+            | Library | Version |
+            |---------|---------|
+            | OpenSSL | ${{ env.OPENSSL_VERSION }} |
+            | cURL | ${{ env.CURL_VERSION }} |
+            | NDK | ${{ env.ANDROID_NDK }} |
+
+            ### Supported ABIs
+            | ABI | Min API |
+            |-----|---------|
+            | `arm64-v8a` | 21 |
+            | `armeabi-v7a` | 21 |
+            | `x86_64` | 21 |
+            | `x86` | 21 |
+            | `riscv64` | 35 |
+
+            ### Usage
+            See [README](https://github.com/${{ github.repository }}#usage) for integration instructions.
           files: ${{ env.FINAL_ZIP }}
-          # 'prerelease: false' và 'draft: false' là mặc định, nhưng có thể thêm nếu muốn
